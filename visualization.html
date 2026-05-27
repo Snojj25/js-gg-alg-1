@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MIM – vizualizacija algoritma (10 vozlišč)</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 980px; margin: 0 auto; padding: 24px;
+      background: #f8fafc; color: #1e293b; line-height: 1.5;
+    }
+    h1 { font-size: 1.35rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #64748b; margin-bottom: 1.25rem; font-size: 0.95rem; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tab {
+      padding: 10px 18px; border: none; border-radius: 8px 8px 0 0;
+      background: #e2e8f0; color: #475569; cursor: pointer; font-size: 0.9rem;
+    }
+    .tab.active { background: white; color: #1e40af; font-weight: 600; }
+    .panel {
+      background: white; border-radius: 0 12px 12px 12px;
+      padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px;
+    }
+    .section { display: none; }
+    .section.active { display: block; }
+    svg { display: block; margin: 0 auto; max-width: 100%; }
+    .controls {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 16px;
+    }
+    button {
+      padding: 8px 16px; border: none; border-radius: 8px;
+      background: #2563eb; color: white; cursor: pointer; font-size: 0.9rem;
+    }
+    button:hover { background: #1d4ed8; }
+    button.secondary { background: #e2e8f0; color: #334155; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .step-info {
+      background: #eff6ff; border-left: 4px solid #2563eb;
+      padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 12px; font-size: 0.92rem;
+    }
+    .step-info.prune { background: #fef2f2; border-color: #ef4444; }
+    .step-info.reduce { background: #f0fdf4; border-color: #16a34a; }
+    .step-info.branch { background: #faf5ff; border-color: #9333ea; }
+    .step-info.success { background: #fefce8; border-color: #ca8a04; }
+    .stats-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;
+      font-size: 0.82rem;
+    }
+    .stat {
+      background: #f1f5f9; border-radius: 6px; padding: 4px 10px;
+    }
+    .stat.prune-stat { background: #fee2e2; color: #b91c1c; }
+    .stat.ok-stat { background: #dcfce7; color: #15803d; }
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.85rem; margin-top: 12px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #334155; }
+    .dot.active { background: #dcfce7; border-color: #16a34a; }
+    .dot.inactive { background: #f1f5f9; border-color: #94a3b8; opacity: 0.55; }
+    .dot.selected { background: #dbeafe; border-color: #2563eb; }
+    .dot.branch { background: #f3e8ff; border-color: #9333ea; }
+    .dot.forced { background: #fef9c3; border-color: #ca8a04; }
+    .line-sample { width: 24px; height: 3px; border-radius: 2px; background: #cbd5e1; }
+    .line-sample.sel { background: #2563eb; height: 4px; }
+    .line-sample.try { background: #9333ea; height: 4px; }
+    .counter { color: #64748b; font-size: 0.9rem; }
+    .problem-box {
+      background: #fefce8; border: 1px solid #fde047;
+      border-radius: 8px; padding: 12px 16px; font-size: 0.9rem; margin-bottom: 16px;
+    }
+    .bb-layout { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @media (min-width: 780px) {
+      .bb-layout { grid-template-columns: 1.4fr 1fr; align-items: start; }
+    }
+    .tree-panel {
+      background: #f8fafc; border-radius: 10px; padding: 12px;
+      border: 1px solid #e2e8f0;
+    }
+    .tree-panel h3 { font-size: 0.85rem; margin: 0 0 8px; color: #64748b; }
+    h2 { font-size: 1rem; margin: 0 0 8px; }
+    h3 { font-size: 0.95rem; margin: 1.25rem 0 0.5rem; color: #1e40af; }
+    .proof-panel { font-size: 0.92rem; }
+    .proof-panel p { margin: 0 0 10px; }
+    .lemma {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: 14px 16px; margin: 12px 0;
+    }
+    .lemma-title { font-weight: 700; color: #1e293b; margin-bottom: 6px; }
+    .proof-step { margin-left: 0; padding-left: 1rem; border-left: 3px solid #cbd5e1; }
+    .proof-step p { margin: 6px 0; }
+    .qed { text-align: right; color: #64748b; font-style: italic; margin-top: 8px; }
+    .math { font-family: "Times New Roman", Georgia, serif; font-style: italic; }
+    .warn-box {
+      background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px;
+      padding: 12px 16px; font-size: 0.88rem; margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Maksimalno inducirano ujemanje – vizualizacija</h1>
+  <p class="subtitle">Graf z 10 vozlišči: faza 1 (požrešni) in faza 2 (razvejaj in omeji)</p>
+
+  <div class="problem-box">
+    <strong>Problem:</strong> Izberi čim več povezav, da nobeno vozlišče iz ene povezave ni sosednje
+    nobenemu vozlišču iz druge povezave. Ko izberemo povezavo (u,v), iz grafa odstranimo
+    vsa vozlišča iz N(u) ∪ N(v).
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="faza1">Faza 1 – Požrešni algoritem</button>
+    <button class="tab" data-tab="faza2">Faza 2 – Razvejaj in omeji</button>
+    <button class="tab" data-tab="dokazi">Dokazi pravilnosti</button>
+  </div>
+
+  <!-- FAZA 1 -->
+  <div id="faza1" class="section active">
+    <div class="panel">
+      <svg id="graph" width="760" height="340" viewBox="0 0 760 340"></svg>
+      <div class="legend">
+        <div class="legend-item"><span class="dot active"></span> aktivno vozlišče</div>
+        <div class="legend-item"><span class="dot inactive"></span> odstranjeno</div>
+        <div class="legend-item"><span class="dot selected"></span> v izbrani povezavi</div>
+        <div class="legend-item"><span class="line-sample"></span> povezava</div>
+        <div class="legend-item"><span class="line-sample sel"></span> izbrana povezava</div>
+      </div>
+      <div class="step-info" id="stepInfo"></div>
+      <div class="controls">
+        <button id="prevBtn" class="secondary">← Prejšnji</button>
+        <button id="nextBtn">Naslednji →</button>
+        <button id="resetBtn" class="secondary">Na začetek</button>
+        <span class="counter" id="counter"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAZA 2 -->
+  <div id="faza2" class="section">
+    <div class="panel">
+      <div class="bb-layout">
+        <div>
+          <p style="font-size:0.88rem;margin:0 0 10px;color:#475569;">
+            Vsak korak prikazuje <strong>trenutno stanje iskanja</strong>: aktivna vozlišča (zelena),
+            že izbrane povezave (modra), vozlišče za razvejanje (vijolično), pravkar preizkušano
+            dejanje (vijolična povezava).
+          </p>
+          <svg id="bbGraph" width="760" height="340" viewBox="0 0 760 340"></svg>
+          <div class="legend">
+            <div class="legend-item"><span class="dot active"></span> aktivno (kandidat)</div>
+            <div class="legend-item"><span class="dot inactive"></span> neaktivno</div>
+            <div class="legend-item"><span class="dot selected"></span> v rešitvi |r|</div>
+            <div class="legend-item"><span class="dot branch"></span> minV (razvejanje)</div>
+            <div class="legend-item"><span class="dot forced"></span> ravno vsiljena povezava</div>
+            <div class="legend-item"><span class="line-sample try"></span> preizkušamo zdaj</div>
+          </div>
+        </div>
+        <div class="tree-panel">
+          <h3>Pozicija v drevesu iskanja</h3>
+          <svg id="bbTree" width="340" height="340" viewBox="0 0 340 340"></svg>
+        </div>
+      </div>
+      <div class="stats-bar" id="statsBar"></div>
+      <div class="step-info" id="bbInfo"></div>
+      <div class="controls">
+        <button id="bbPrevBtn" class="secondary">← Prejšnji</button>
+        <button id="bbNextBtn">Naslednji →</button>
+        <button id="bbResetBtn" class="secondary">Na začetek</button>
+        <span class="counter" id="bbCounter"></span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Pravila rezanja vej</h2>
+      <p style="font-size:0.9rem;margin:0 0 6px;">
+        <strong>ub</strong> = min(⌊|A|/2⌋, število preostalih povezav). Če <strong>|r| + ub ≤ best</strong> → vejo odrežemo ✂
+      </p>
+      <p style="font-size:0.9rem;margin:0;">
+        Podrobnosti dokazov so v zavihku <strong>Dokazi pravilnosti</strong>.
+      </p>
+    </div>
+  </div>
+
+  <!-- DOKAZI -->
+  <div id="dokazi" class="section proof-panel">
+    <div class="panel">
+      <h2>Formalna definicija</h2>
+      <p>
+        Naj bo <span class="math">G = (V, E)</span> neusmerjen graf. Množica povezav
+        <span class="math">S ⊆ E</span> je <strong>inducirano ujemanje</strong>, če:
+      </p>
+      <p class="proof-step">
+        (1) nobeni dve povezavi v <span class="math">S</span> ne delita vozlišča (ujemanje), in<br>
+        (2) za vsaki dve različni povezavi <span class="math">{u,v}, {x,y} ∈ S</span> velja
+        <span class="math">{u,v} ∩ {x,y} = ∅</span> in nobeno vozlišče iz prve povezave ni sosednje
+        nobenemu vozlišču iz druge (induciranost).
+      </p>
+      <p>
+        V algoritmu imenujemo <span class="math">r</span> delno rešitev (že izbrane povezave),
+        <span class="math">A ⊆ V</span> množico <strong>aktivnih</strong> vozlišč (kandidatov za nadaljnje povezave),
+        <span class="math">best</span> velikost najboljše znane popolne rešitve.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Dokaz 1 – Zgornja meja iz števila vozlišč</h2>
+      <div class="lemma">
+        <div class="lemma-title">Izrek 1.</div>
+        Iz aktivne množice <span class="math">A</span> lahko dodamo največ
+        <span class="math">⌊|A|/2⌋</span> povezav v inducirano ujemanje.
+      </div>
+      <div class="proof-step">
+        <p><strong>Dokaz.</strong> Vsaka povezava v ujemanju uporabi natanko 2 različni vozlišči.</p>
+        <p>Ker povezave v ujemanju ne delijo vozlišč (pogoj 1), so ta vozlišča disjunktna.</p>
+        <p>Če dodamo <span class="math">k</span> povezav, porabimo <span class="math">2k</span> vozlišč iz <span class="math">A</span>, torej <span class="math">2k ≤ |A|</span>, od koder <span class="math">k ≤ |A|/2</span>.</p>
+        <p>Ker je <span class="math">k</span> celo, velja <span class="math">k ≤ ⌊|A|/2⌋</span>. ∎</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Dokaz 2 – Zgornja meja iz števila povezav</h2>
+      <div class="lemma">
+        <div class="lemma-title">Izrek 2.</div>
+        Naj <span class="math">E_A</span> povezave induciranega podgrafa na <span class="math">A</span>.
+        Iz <span class="math">A</span> lahko dodamo največ <span class="math">|E_A|</span> povezav.
+      </div>
+      <div class="proof-step">
+        <p><strong>Dokaz.</strong> Vsaka dodana povezava mora biti element <span class="math">E</span>, torej tudi <span class="math">E_A</span>.</p>
+        <p>V ujemanju je vsaka povezava iz <span class="math">E</span> največ enkrat, zato je število dodanih povezav ≤ <span class="math">|E_A|</span>. ∎</p>
+      </div>
+      <p>
+        Algoritem vzame <span class="math">ub = min(⌊|A|/2⌋, |E_A|)</span> — velja obe meji hkrati,
+        zato je <span class="math">ub</span> zgornja meja dodatnih povezav iz <span class="math">A</span>.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Dokaz 3 – Pravilnost rezanja vej</h2>
+      <div class="lemma">
+        <div class="lemma-title">Izrek 3 (pruning).</div>
+        Če velja <span class="math">|r| + ub ≤ best</span>, nobena nadaljnja rešitev v tej veji
+        drevesa ne more imeti več kot <span class="math">best</span> povezav.
+      </div>
+      <div class="proof-step">
+        <p><strong>Dokaz.</strong> Naj bo <span class="math">r</span> trenutna delna rešitev in <span class="math">A</span> preostala aktivna vozlišča.</p>
+        <p>Poljubna popolna rešitev v tej veji ima obliko <span class="math">r ∪ S'</span>,
+        kjer je <span class="math">S'</span> inducirano ujemanje na podgrafu induciranem z <span class="math">A</span>
+        (in z vozlišči, ki niso sosednja vozliščem iz <span class="math">r</span> — to zagotavlja odstranitev
+        <span class="math">N(u) ∪ N(v)</span> ob vključitvi povezave).</p>
+        <p>Po Izrekih 1 in 2 velja <span class="math">|S'| ≤ ub</span>.</p>
+        <p>Torej <span class="math">|r ∪ S'| ≤ |r| + ub ≤ best</span>.</p>
+        <p>Če isčemo rešitev strogo boljšo od <span class="math">best</span>, te veje ni — varno jo odrežemo. ∎</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Dokaz 4 – Redukcija: izolirana vozlišča</h2>
+      <div class="lemma">
+        <div class="lemma-title">Izrek 4.</div>
+        Vozlišče <span class="math">v ∈ A</span> s stopnjo 0 v podgrafu na <span class="math">A</span>
+        ne more biti v nobeni povezavi induciranega ujemanja. Varno ga odstranimo iz <span class="math">A</span>.
+      </div>
+      <div class="proof-step">
+        <p><strong>Dokaz.</strong> Stopnja 0 pomeni, da <span class="math">v</span> nima sosedov v <span class="math">A</span>.</p>
+        <p>Vsaka povezava, ki vsebuje <span class="math">v</span>, mora imeti drugega konca zunaj dosega
+        (sicer povezave ni). Tisti konec mora biti v <span class="math">A</span>, kar je v nasprotju s stopnjo 0.</p>
+        <p>Torej <span class="math">v</span> ne more biti v nobeni izbrani povezavi. ∎</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Dokaz 5 – Redukcija: izolirana povezava (stopnja 1–1)</h2>
+      <div class="lemma">
+        <div class="lemma-title">Izrek 5.</div>
+        Naj <span class="math">u, v ∈ A</span>, <span class="math">{u,v} ∈ E</span>, oba imata stopnjo 1 v podgrafu na <span class="math">A</span>,
+        in sta edina soseda. Vsako <strong>maksimalno</strong> inducirano ujemanje na trenutnem podproblemu
+        vsebuje povezavo <span class="math">{u,v}</span>. Varno jo vsilimo v <span class="math">r</span>.
+      </div>
+      <div class="proof-step">
+        <p><strong>Dokaz.</strong> Naj bo <span class="math">M</span> maksimalno inducirano ujemanje
+        (znotraj trenutnega podproblema), ki <strong>ne</strong> vsebuje <span class="math">{u,v}</span>.</p>
+        <p>Ker je <span class="math">u</span> edini sosed <span class="math">v</span> in obratno,
+        nobena druga povezava v <span class="math">M</span> ne vsebuje <span class="math">u</span> niti <span class="math">v</span>.</p>
+        <p>Torej sta <span class="math">u</span> in <span class="math">v</span> neuporabljeni v <span class="math">M</span>.</p>
+        <p>Preverimo, ali je <span class="math">M ∪ {u,v}</span> inducirano ujemanje:</p>
+        <p>– <span class="math">{u,v}</span> ne deli vozlišč s povezavami iz <span class="math">M</span> (ujemanje).</p>
+        <p>– Noben sosed <span class="math">u</span> ali <span class="math">v</span> ni v <span class="math">M</span>
+        (edini sosed je drugi konec, ki ni v <span class="math">M</span>).</p>
+        <p>– Povezave iz <span class="math">M</span> ne smejo biti sosednje <span class="math">u</span> ali <span class="math">v</span>:
+        edini sosedi <span class="math">u</span> in <span class="math">v</span> sta med seboj, oba nista v <span class="math">M</span>.</p>
+        <p>Torej je <span class="math">M ∪ {u,v}</span> veljavno inducirano ujemanje in ima velikost <span class="math">|M|+1</span>.</p>
+        <p>To je v nasprotju z maksimalnostjo <span class="math">M</span>.</p>
+        <p>Vsako maksimalno ujemanje torej vsebuje <span class="math">{u,v}</span> — varno jo vsilimo. ∎</p>
+      </div>
+      <div class="warn-box">
+        <strong>Pozor:</strong> Ta redukcija velja le, če imata <strong>oba</strong> konca stopnjo 1.
+        Splošna redukcija »vozlišče stopnje 1 vedno pripne k sosedu« ni varna — glej spodaj.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Dokaz 6 – Pravilnost razvejanja (vključi / izključi)</h2>
+      <div class="lemma">
+        <div class="lemma-title">Izrek 6.</div>
+        Naj <span class="math">v ∈ A</span> vozlišče z najmanjšo pozitivno stopnjo.
+        Za vsako maksimalno ujemanje na podproblemu velja:
+        ali (a) <span class="math">v</span> ni konec nobene izbrane povezave, ali
+        (b) <span class="math">v</span> je konec povezave <span class="math">{v,w}</span> za nekega soseda <span class="math">w</span>.
+      </div>
+      <div class="proof-step">
+        <p><strong>Dokaz.</strong> Za poljubno rešitev je za vozlišče <span class="math">v</span> natanko eno:</p>
+        <p>– <span class="math">v</span> ni v nobeni izbrani povezavi (veja »izključi v«), ali</p>
+        <p>– <span class="math">v</span> je v izbrani povezavi <span class="math">{v,w}</span> za soseda <span class="math">w</span> (veja »vključi {v,w}«).</p>
+        <p>Algoritem preizkusi vse te možnosti — nobena optimalna rešitev se ne izgubi. ∎</p>
+      </div>
+      <h3>Zakaj ob vključitvi {u,v} odstranimo N(u) ∪ N(v)?</h3>
+      <p>
+        Naj bo <span class="math">x ∈ N(u) ∪ N(v)</span>. Če bi <span class="math">x</span> bil konec neke
+        druge izbrane povezave <span class="math">{x,y}</span>, bi bil <span class="math">x</span> sosed
+        <span class="math">u</span> ali <span class="math">v</span> — to krši induciranost (pogoj 2).
+        Torej nobeno vozlišče iz <span class="math">N(u) ∪ N(v)</span> (vključno z <span class="math">u, v</span>,
+        ker sta soseda) ne sme biti v nadaljnjih povezavah. Odstranitev iz <span class="math">A</span> je torej pravilna.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Protiprimer – zakaj ne vsilimo vsake povezave stopnje 1</h2>
+      <p>Če ima vozlišče <span class="math">u</span> stopnjo 1, sosed <span class="math">v</span> pa večjo,
+      redukcija »vsili {u,v}« ni varna:</p>
+      <pre style="background:#f1f5f9;padding:12px;border-radius:8px;font-size:0.85rem;margin:10px 0;">
+    v — u — a — b
+            |
+            c — d
+      </pre>
+      <p>
+        Vsili <span class="math">{v,u}</span> → ujemanje velikosti 1. Optimalno ujemanje pa je
+        <span class="math">{(a,b), (c,d)}</span> velikosti 2. Zato algoritem vsili le povezave,
+        kjer imata <strong>oba</strong> konca stopnjo 1 (kot pri 9–10 v našem primeru).
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Sklep – zakaj algoritem ne zamudi optimuma</h2>
+      <p>
+        Branch-and-bound ohrani pravilnost, ker:
+      </p>
+      <p class="proof-step">
+        (1) <strong>Redukcije</strong> (Izrek 4, 5) ne izločijo nobene maksimalne rešitve.<br>
+        (2) <strong>Razvejanje</strong> (Izrek 6) pokrije vse možnosti za izbrano vozlišče.<br>
+        (3) <strong>Rezanje</strong> (Izrek 3) odstrani le veje, ki ne morejo preseči <span class="math">best</span>.<br>
+        (4) Ko iskanje konča (ali poteče čas), je <span class="math">best</span> velikost največjega
+        najdenega induciranega ujemanja; če drevo raziskano v celoti, je to optimum.
+      </p>
+      <p>
+        Heuristika (faza 1) le nastavi začetno vrednost <span class="math">best</span> — ne vpliva na pravilnost,
+        le pospeši rezanje vej (Izrek 3 velja za katerokoli veljavno spodnjo mejo).
+      </p>
+    </div>
+  </div>
+
+<script>
+const EDGES = [[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[8,9]];
+const POS = {
+  0:[80,70],1:[180,70],2:[280,70],3:[380,70],4:[480,70],
+  5:[480,150],6:[580,150],7:[680,150],8:[120,260],9:[220,260]
+};
+const ALL = [0,1,2,3,4,5,6,7,8,9];
+
+function label(v){ return v+1; }
+function edgeKey(a,b){ return a<b?`${a}-${b}`:`${b}-${a}`; }
+function neighbors(v){
+  const n=[];
+  EDGES.forEach(([a,b])=>{ if(a===v)n.push(b); if(b===v)n.push(a); });
+  return n;
+}
+function afterEdge(active, u, v){
+  const rem = new Set([u,v,...neighbors(u),...neighbors(v)]);
+  return active.filter(x=>!rem.has(x));
+}
+
+// ========== FAZA 1 ==========
+const steps = [
+  { title:"Korak 0 – Začetno stanje", text:"Vsa vozlišča aktivna. Iščemo povezavo z najmanjšim |N(u)∪N(v)|.",
+    active:ALL, selected:[], pick:null, scores:true },
+  { title:"Korak 1 – Izbira (9,10)", text:"Score=2. Izberemo (9,10), odstranimo {9,10}.",
+    active:[0,1,2,3,4,5,6,7], selected:[[8,9]], pick:[8,9], remove:[8,9] },
+  { title:"Korak 2 – Izbira (1,2)", text:"Score=3. Izberemo (1,2), odstranimo {1,2,3}.",
+    active:[3,4,5,6,7], selected:[[8,9],[0,1]], pick:[0,1], remove:[0,1,2] },
+  { title:"Korak 3 – Izbira (7,8)", text:"Score=3. Izberemo (7,8), odstranimo {6,7,8}.",
+    active:[3,4], selected:[[8,9],[0,1],[6,7]], pick:[6,7], remove:[5,6,7] },
+  { title:"Korak 4 – Izbira (4,5)", text:"Score=2. Izberemo (4,5), odstranimo {4,5}.",
+    active:[], selected:[[8,9],[0,1],[6,7],[3,4]], pick:[3,4], remove:[3,4] },
+  { title:"Končano – Heuristika", text:"Rešitev velikosti 4. Ta vrednost postane best=4 za fazo 2.",
+    active:[], selected:[[8,9],[0,1],[6,7],[3,4]], pick:null }
+];
+let stepIdx = 0;
+
+function renderGraph(svgId, state){
+  const svg = document.getElementById(svgId);
+  svg.innerHTML = "";
+  const activeSet = new Set(state.active);
+  const selVerts = new Set(state.selected.flat());
+  const removeSet = new Set(state.remove||[]);
+  const pickSet = new Set(state.pick||[]);
+  const branchV = state.branchV;
+  const tryEdge = state.tryEdge;
+  const forced = state.forced;
+  const selEdgeSet = new Set(state.selected.map(e=>edgeKey(e[0],e[1])));
+
+  EDGES.forEach(([u,v])=>{
+    const key = edgeKey(u,v);
+    const line = document.createElementNS("http://www.w3.org/2000/svg","line");
+    line.setAttribute("x1",POS[u][0]); line.setAttribute("y1",POS[u][1]);
+    line.setAttribute("x2",POS[v][0]); line.setAttribute("y2",POS[v][1]);
+    const isTry = tryEdge && edgeKey(tryEdge[0],tryEdge[1])===key;
+    const isSel = selEdgeSet.has(key);
+    const bothAct = activeSet.has(u)&&activeSet.has(v);
+    if(isTry){ line.setAttribute("stroke","#9333ea"); line.setAttribute("stroke-width","5"); line.setAttribute("stroke-dasharray","6,3"); }
+    else if(isSel){ line.setAttribute("stroke","#2563eb"); line.setAttribute("stroke-width","3.5"); }
+    else if(bothAct){ line.setAttribute("stroke","#cbd5e1"); line.setAttribute("stroke-width","2"); }
+    else { line.setAttribute("stroke","#e2e8f0"); line.setAttribute("stroke-width","1.5"); }
+    svg.appendChild(line);
+  });
+
+  for(let v=0;v<10;v++){
+    const [x,y]=POS[v];
+    let fill="#f1f5f9", stroke="#94a3b8", r=20, op=0.55;
+    if(activeSet.has(v)){ fill="#dcfce7"; stroke="#16a34a"; op=1; }
+    if(selVerts.has(v)){ fill="#dbeafe"; stroke="#2563eb"; op=1; }
+    if(forced && pickSet.has(v)){ fill="#fef9c3"; stroke="#ca8a04"; op=1; r=22; }
+    if(branchV===v){ stroke="#9333ea"; r=24; }
+    if(removeSet.has(v)&&state.pick){ fill="#fee2e2"; stroke="#ef4444"; op=1; }
+
+    const c = document.createElementNS("http://www.w3.org/2000/svg","circle");
+    c.setAttribute("cx",x); c.setAttribute("cy",y); c.setAttribute("r",r);
+    c.setAttribute("fill",fill); c.setAttribute("stroke",stroke);
+    c.setAttribute("stroke-width",branchV===v?"3":"2"); c.setAttribute("opacity",op);
+    svg.appendChild(c);
+    const t = document.createElementNS("http://www.w3.org/2000/svg","text");
+    t.setAttribute("x",x); t.setAttribute("y",y+5); t.setAttribute("text-anchor","middle");
+    t.setAttribute("font-size","14"); t.setAttribute("font-weight","600");
+    t.setAttribute("fill","#1e293b"); t.textContent=label(v);
+    svg.appendChild(t);
+  }
+}
+
+function drawPhase1(){
+  renderGraph("graph", steps[stepIdx]);
+  document.getElementById("stepInfo").innerHTML=
+    `<strong>${steps[stepIdx].title}</strong><br>${steps[stepIdx].text}`;
+  document.getElementById("counter").textContent=`Korak ${stepIdx+1}/${steps.length}`;
+  document.getElementById("prevBtn").disabled=stepIdx===0;
+  document.getElementById("nextBtn").disabled=stepIdx===steps.length-1;
+}
+
+// ========== FAZA 2 – koraki z natančnim stanjem ==========
+const bbSteps = [
+  {
+    id:"S0", treeId:"R", cls:"",
+    title:"Korak 0 – Koren iskanja",
+    text:"Začnemo branch-and-bound. Heuristika je že našla rešitev velikosti 4, zato je best=4. Vsa vozlišča 1–10 so še aktivna, trenutna rešitev |r|=0.",
+    active:ALL, selected:[], branchV:null, tryEdge:null,
+    stats:{ r:0, A:10, ub:5, best:4, sum:5, pruned:false, action:"Začetek" }
+  },
+  {
+    id:"S1", treeId:"RED", cls:"reduce",
+    title:"Korak 1 – Redukcija: vsili (9,10)",
+    text:"Vozlišči 9 in 10 imata obe stopnjo 1 in sta edina soseda → povezavo (9,10) moramo vključiti v |r|. Odstranimo 9 in 10 iz aktivne množice A. Preostane A={1,…,8}, |r|=1.",
+    active:[0,1,2,3,4,5,6,7], selected:[[8,9]], forced:true, pick:[8,9],
+    branchV:null, tryEdge:[8,9],
+    stats:{ r:1, A:8, ub:4, best:4, sum:5, pruned:false, action:"Vsili (9,10)" }
+  },
+  {
+    id:"S2", treeId:"RED", cls:"branch",
+    title:"Korak 2 – Priprava razvejanja",
+    text:"V aktivnem podgrafu {1,…,8} ima vozlišče 1 najmanjšo stopnjo (=1). Algoritem se razveji: za soseda 2 poskusi vključiti (1,2), nato poskusi izključiti vozlišče 1.",
+    active:[0,1,2,3,4,5,6,7], selected:[[8,9]], branchV:0,
+    stats:{ r:1, A:8, ub:4, best:4, sum:5, pruned:false, action:"minV = 1" }
+  },
+  {
+    id:"S3", treeId:"I12", cls:"",
+    title:"Korak 3 – Veja: vključi (1,2)",
+    text:"Dodamo (1,2) v rešitev → |r|=2. Iz A odstranimo N(1)∪N(2) = {1,2,3}. Preostane A={4,5,6,7,8}.",
+    active:[3,4,5,6,7], selected:[[8,9],[0,1]], branchV:null, tryEdge:[0,1],
+    stats:{ r:2, A:5, ub:2, best:4, sum:4, pruned:false, action:"Vključi (1,2)" }
+  },
+  {
+    id:"S4", treeId:"I12", cls:"prune",
+    title:"Korak 4 – ✂ Odrez te veje (best=4)",
+    text:"Preverimo: |r|+ub = 2+2 = 4 ≤ best=4. Boljše rešitve ni mogoče doseči → celotno poddrevo pod »vključi (1,2)« se odreže, brez nadaljnjega razvejanja.",
+    active:[3,4,5,6,7], selected:[[8,9],[0,1]], branchV:null, tryEdge:[0,1],
+    stats:{ r:2, A:5, ub:2, best:4, sum:4, pruned:true, action:"REZ ✂" }
+  },
+  {
+    id:"S5", treeId:"X1", cls:"prune",
+    title:"Korak 5 – ✂ Veja: izključi 1",
+    text:"Vozlišče 1 ne sme biti konec nobene povezave — iz A ga odstranimo. |r|=1, A={2,…,8} (7 vozlišč), ub=3. Ker 1+3=4 ≤ best → tudi ta veja se odreže ✂.",
+    active:[1,2,3,4,5,6,7], selected:[[8,9]], branchV:0, tryEdge:null,
+    stats:{ r:1, A:7, ub:3, best:4, sum:4, pruned:true, action:"Izključi 1 → REZ ✂" }
+  },
+  {
+    id:"S6", treeId:"END", cls:"success",
+    title:"Korak 6 – Konec (best=4)",
+    text:"Vse veje so odrezane. Algoritem potrdi: optimum je 4 (enako heuristiki). Na tem grafu ne obstaja rešitev velikosti 5.",
+    active:[], selected:[[8,9],[0,1],[6,7],[3,4]], branchV:null,
+    stats:{ r:4, A:0, ub:0, best:4, sum:4, pruned:false, action:"Optimum = 4" }
+  },
+  {
+    id:"S7", treeId:"I12", cls:"branch",
+    title:"Korak 7 – Če bi bil best=3: nadaljuj (1,2)",
+    text:"Če heuristika ne bi našla 4, bi bil best=3. Takrat 2+2=4 > 3 → veja »vključi (1,2)« bi nadaljevala. minV=8 (stopnja 1).",
+    active:[3,4,5,6,7], selected:[[8,9],[0,1]], branchV:6,
+    stats:{ r:2, A:5, ub:2, best:3, sum:4, pruned:false, action:"best=3 → nadaljuj" }
+  },
+  {
+    id:"S8", treeId:"I78", cls:"",
+    title:"Korak 8 – Vključi (7,8)",
+    text:"Dodamo (7,8) → |r|=3. Odstranimo N(7)∪N(8)={6,7,8}. Preostane A={4,5}.",
+    active:[3,4], selected:[[8,9],[0,1],[6,7]], tryEdge:[6,7],
+    stats:{ r:3, A:2, ub:1, best:3, sum:4, pruned:false, action:"Vključi (7,8)" }
+  },
+  {
+    id:"S9", treeId:"I45", cls:"success",
+    title:"Korak 9 – Vključi (4,5), best := 4",
+    text:"Dodamo (4,5) → |r|=4. A=∅. Našli smo rešitev velikosti 4 in posodobimo best:=4. To je optimalna rešitev.",
+    active:[], selected:[[8,9],[0,1],[6,7],[3,4]], tryEdge:[3,4],
+    stats:{ r:4, A:0, ub:0, best:4, sum:4, pruned:false, action:"best := 4 ✓" }
+  },
+  {
+    id:"S10", treeId:"X2", cls:"prune",
+    title:"Korak 10 – ✂ Izključi 8 (best=3)",
+    text:"Alternativna veja: ne vključimo (7,8). |r|=2, A={4,5,6}, ub=1, 2+1=3 ≤ best=3 → odrez ✂.",
+    active:[3,4,5], selected:[[8,9],[0,1]], branchV:6,
+    stats:{ r:2, A:3, ub:1, best:3, sum:3, pruned:true, action:"Izključi 8 → REZ ✂" }
+  }
+];
+
+// Tree structure for mini tree panel
+const treeDef = {
+  R:   { x:170, y:20,  label:"Koren",           parent:null },
+  RED: { x:170, y:80,  label:"Vsili (9,10)",    parent:"R" },
+  I12: { x:70,  y:150, label:"Vključi (1,2)",   parent:"RED" },
+  X1:  { x:270, y:150, label:"Izključi 1",      parent:"RED" },
+  I78: { x:30,  y:220, label:"Vključi (7,8)",   parent:"I12" },
+  X2:  { x:110, y:220, label:"Izključi 8",      parent:"I12" },
+  I45: { x:30,  y:290, label:"Vključi (4,5)",   parent:"I78" },
+  END: { x:170, y:290, label:"Konec",           parent:"RED" }
+};
+
+let bbIdx = 0;
+
+function drawMiniTree(currentId, prunedIds){
+  const svg = document.getElementById("bbTree");
+  svg.innerHTML = "";
+  const pruned = new Set(prunedIds||[]);
+  const onPath = new Set();
+  let id = currentId;
+  while(id){ onPath.add(id); id = treeDef[id]?.parent; }
+
+  Object.entries(treeDef).forEach(([nid, node])=>{
+    if(node.parent && treeDef[node.parent]){
+      const p = treeDef[node.parent];
+      const line = document.createElementNS("http://www.w3.org/2000/svg","line");
+      line.setAttribute("x1",p.x); line.setAttribute("y1",p.y+22);
+      line.setAttribute("x2",node.x); line.setAttribute("y2",node.y);
+      line.setAttribute("stroke", onPath.has(nid)&&onPath.has(node.parent)?"#2563eb":"#e2e8f0");
+      line.setAttribute("stroke-width", onPath.has(nid)&&onPath.has(node.parent)?2:1);
+      svg.appendChild(line);
+    }
+  });
+
+  Object.entries(treeDef).forEach(([nid, node])=>{
+    const isCur = nid===currentId;
+    const isPath = onPath.has(nid);
+    const isPr = pruned.has(nid);
+    let fill="#f1f5f9", stroke="#94a3b8";
+    if(isPr) { fill="#fee2e2"; stroke="#ef4444"; }
+    else if(isCur) { fill="#dbeafe"; stroke="#2563eb"; }
+    else if(isPath) { fill="#eff6ff"; stroke="#60a5fa"; }
+
+    const rect = document.createElementNS("http://www.w3.org/2000/svg","rect");
+    rect.setAttribute("x", node.x-52); rect.setAttribute("y", node.y);
+    rect.setAttribute("width",104); rect.setAttribute("height",22);
+    rect.setAttribute("rx",5); rect.setAttribute("fill",fill);
+    rect.setAttribute("stroke",stroke); rect.setAttribute("stroke-width", isCur?2.5:1.5);
+    svg.appendChild(rect);
+    const t = document.createElementNS("http://www.w3.org/2000/svg","text");
+    t.setAttribute("x",node.x); t.setAttribute("y",node.y+15);
+    t.setAttribute("text-anchor","middle"); t.setAttribute("font-size","9");
+    t.setAttribute("fill", isPr?"#b91c1c":"#334155");
+    t.setAttribute("font-weight", isCur?"700":"400");
+    t.textContent = node.label + (isPr?" ✂":"");
+    svg.appendChild(t);
+  });
+}
+
+function drawPhase2(){
+  const s = bbSteps[bbIdx];
+  renderGraph("bbGraph", s);
+
+  const prunedOnPath = bbSteps.slice(0, bbIdx+1).filter(x=>x.stats.pruned).map(x=>x.treeId);
+  drawMiniTree(s.treeId, prunedOnPath);
+
+  const st = s.stats;
+  const sumCls = st.pruned ? "prune-stat" : (st.sum > st.best ? "ok-stat" : "prune-stat");
+  document.getElementById("statsBar").innerHTML = `
+    <span class="stat">|r| = ${st.r}</span>
+    <span class="stat">|A| = ${st.A}</span>
+    <span class="stat">ub = ${st.ub}</span>
+    <span class="stat">best = ${st.best}</span>
+    <span class="stat ${sumCls}">|r|+ub = ${st.sum} ${st.pruned?"≤ best → REZ ✂":(st.sum>st.best?" > best → nadaljuj":"")}</span>
+    <span class="stat">${st.action}</span>
+  `;
+
+  const info = document.getElementById("bbInfo");
+  info.className = "step-info" + (s.cls ? " "+s.cls : "");
+  info.innerHTML = `<strong>${s.title}</strong><br>${s.text}`;
+
+  document.getElementById("bbCounter").textContent = `Korak ${bbIdx+1} / ${bbSteps.length}`;
+  document.getElementById("bbPrevBtn").disabled = bbIdx===0;
+  document.getElementById("bbNextBtn").disabled = bbIdx===bbSteps.length-1;
+}
+
+document.querySelectorAll(".tab").forEach(tab=>{
+  tab.addEventListener("click", ()=>{
+    document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+    document.querySelectorAll(".section").forEach(s=>s.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById(tab.dataset.tab).classList.add("active");
+  });
+});
+
+document.getElementById("prevBtn").addEventListener("click", ()=>{ if(stepIdx>0){stepIdx--;drawPhase1();} });
+document.getElementById("nextBtn").addEventListener("click", ()=>{ if(stepIdx<steps.length-1){stepIdx++;drawPhase1();} });
+document.getElementById("resetBtn").addEventListener("click", ()=>{ stepIdx=0; drawPhase1(); });
+
+document.getElementById("bbPrevBtn").addEventListener("click", ()=>{ if(bbIdx>0){bbIdx--;drawPhase2();} });
+document.getElementById("bbNextBtn").addEventListener("click", ()=>{ if(bbIdx<bbSteps.length-1){bbIdx++;drawPhase2();} });
+document.getElementById("bbResetBtn").addEventListener("click", ()=>{ bbIdx=0; drawPhase2(); });
+
+drawPhase1();
+drawPhase2();
+</script>
+</body>
+</html>
