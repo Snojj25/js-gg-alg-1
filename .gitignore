@@ -1,0 +1,25 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Compiled Go binary
+/solver
+/red-group-submission/solver
+
+# Generated artifacts
+*.html
+*.pdf
+*.zip
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Test input/output files
+*.in
+*.out
+
+# Track everything under evaluation/ regardless of patterns above
+!evaluation/
+!evaluation/**
