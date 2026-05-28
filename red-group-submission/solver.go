@@ -9,33 +9,42 @@ import (
 	"time"
 )
 
-// Bitset supports up to 1024 vertices.
-const maxN = 1024
-const maxWords = maxN / 64
+// Bitset is a dynamically-sized bit array. nWords is fixed globally after reading n.
+type Bitset []uint64
 
-var nWords int
+var (
+	n      int
+	nWords int
+	adj    []Bitset
+)
 
-type Bitset [maxWords]uint64
+func newBitset() Bitset { return make(Bitset, nWords) }
 
-func (b *Bitset) Set(i int)      { b[i>>6] |= 1 << uint(i&63) }
-func (b *Bitset) Clear(i int)    { b[i>>6] &^= 1 << uint(i&63) }
-func (b *Bitset) Has(i int) bool { return b[i>>6]&(1<<uint(i&63)) != 0 }
+func (b Bitset) Clone() Bitset {
+	r := make(Bitset, len(b))
+	copy(r, b)
+	return r
+}
 
-func (b *Bitset) OrWith(c *Bitset) {
-	for i := 0; i < nWords; i++ {
+func (b Bitset) Set(i int)      { b[i>>6] |= 1 << uint(i&63) }
+func (b Bitset) Clear(i int)    { b[i>>6] &^= 1 << uint(i&63) }
+func (b Bitset) Has(i int) bool { return b[i>>6]&(1<<uint(i&63)) != 0 }
+
+func (b Bitset) OrWith(c Bitset) {
+	for i := range b {
 		b[i] |= c[i]
 	}
 }
 
-func (b *Bitset) AndNot(c *Bitset) {
-	for i := 0; i < nWords; i++ {
+func (b Bitset) AndNot(c Bitset) {
+	for i := range b {
 		b[i] &^= c[i]
 	}
 }
 
-func (b *Bitset) And(c *Bitset) Bitset {
-	var r Bitset
-	for i := 0; i < nWords; i++ {
+func (b Bitset) And(c Bitset) Bitset {
+	r := newBitset()
+	for i := range b {
 		r[i] = b[i] & c[i]
 	}
 	return r
@@ -43,14 +52,14 @@ func (b *Bitset) And(c *Bitset) Bitset {
 
 func (b Bitset) PopCount() int {
 	c := 0
-	for i := 0; i < nWords; i++ {
+	for i := range b {
 		c += bits.OnesCount64(b[i])
 	}
 	return c
 }
 
 func (b Bitset) IsZero() bool {
-	for i := 0; i < nWords; i++ {
+	for i := range b {
 		if b[i] != 0 {
 			return false
 		}
@@ -59,7 +68,7 @@ func (b Bitset) IsZero() bool {
 }
 
 func (b Bitset) FirstSet() int {
-	for i := 0; i < nWords; i++ {
+	for i := range b {
 		if b[i] != 0 {
 			return i*64 + bits.TrailingZeros64(b[i])
 		}
@@ -70,9 +79,6 @@ func (b Bitset) FirstSet() int {
 type Edge struct{ u, v int }
 
 var (
-	n   int
-	adj [maxN]Bitset
-
 	bestSize  int
 	bestEdges []Edge
 	curEdges  []Edge
@@ -83,24 +89,100 @@ var (
 	nodes     int
 )
 
-// greedySolve picks edges by minimum |N(u) ∪ N(v)| to build an induced matching.
-func greedySolve() []Edge {
-	var active Bitset
-	for i := 0; i < n; i++ {
-		active.Set(i)
+// findComponents returns connected components of the subgraph induced by active.
+func findComponents(active Bitset) []Bitset {
+	remaining := active.Clone()
+	var comps []Bitset
+	for !remaining.IsZero() {
+		start := remaining.FirstSet()
+		comp := newBitset()
+		stack := []int{start}
+		comp.Set(start)
+		remaining.Clear(start)
+		for len(stack) > 0 {
+			u := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			nb := adj[u].And(remaining)
+			for wi := 0; wi < nWords; wi++ {
+				w := nb[wi]
+				for w != 0 {
+					bit := bits.TrailingZeros64(w)
+					v := wi*64 + bit
+					w &= w - 1
+					comp.Set(v)
+					remaining.Clear(v)
+					stack = append(stack, v)
+				}
+			}
+		}
+		comps = append(comps, comp)
 	}
+	return comps
+}
+
+// edgeCount returns the number of edges in the subgraph induced by active.
+func edgeCount(active Bitset) int {
+	sumDeg := 0
+	for u := 0; u < n; u++ {
+		if !active.Has(u) {
+			continue
+		}
+		sumDeg += adj[u].And(active).PopCount()
+	}
+	return sumDeg / 2
+}
+
+// isClique returns true if active induces a complete graph (so MIM = 1).
+func isClique(active Bitset) bool {
+	k := active.PopCount()
+	if k < 2 {
+		return false
+	}
+	expectedEdges := k * (k - 1) / 2
+	return edgeCount(active) == expectedEdges
+}
+
+// upperBound combines several UBs for MIM on the subgraph induced by active.
+//
+// We use:
+//   - |V_C| / 2   (each MIM edge uses 2 distinct vertices)
+//   - edge_count  (each MIM edge consumes one edge)
+//   - clique detection: K_t has MIM=1
+//
+// All three are easy and provably correct. For sparse / decomposed inputs
+// these are tight at the component level (e.g. K_3 has |V|/2 = 1 = MIM).
+// For dense / large connected components they can still be loose, but at
+// least they never under-count.
+func upperBound(active Bitset) int {
+	k := active.PopCount()
+	if k < 2 {
+		return 0
+	}
+	if isClique(active) {
+		return 1
+	}
+	ub := k / 2
+	if ec := edgeCount(active); ec < ub {
+		ub = ec
+	}
+	return ub
+}
+
+// greedySolve picks edges by minimum |N(u) ∪ N(v)| to build an induced matching
+// on the subgraph induced by active.
+func greedySolve(active Bitset) []Edge {
+	work := active.Clone()
 	var result []Edge
 	for {
 		bestScore := n*2 + 1
 		bestU, bestV := -1, -1
 		for u := 0; u < n; u++ {
-			if !active.Has(u) {
+			if !work.Has(u) {
 				continue
 			}
-			nbU := adj[u].And(&active)
+			nbU := adj[u].And(work)
 			for wi := 0; wi < nWords; wi++ {
 				w := nbU[wi]
-				// Only consider v > u to avoid duplicates.
 				if wi < u>>6 {
 					w = 0
 				} else if wi == u>>6 {
@@ -110,10 +192,9 @@ func greedySolve() []Edge {
 					bit := bits.TrailingZeros64(w)
 					v := wi*64 + bit
 					w &= w - 1
-					var combined Bitset
-					combined = adj[u]
-					combined.OrWith(&adj[v])
-					score := combined.And(&active).PopCount()
+					combined := adj[u].Clone()
+					combined.OrWith(adj[v])
+					score := combined.And(work).PopCount()
 					if score < bestScore {
 						bestScore = score
 						bestU = u
@@ -126,36 +207,29 @@ func greedySolve() []Edge {
 			break
 		}
 		result = append(result, Edge{bestU, bestV})
-		var remove Bitset
-		remove = adj[bestU]
-		remove.OrWith(&adj[bestV])
-		active.AndNot(&remove)
+		remove := adj[bestU].Clone()
+		remove.OrWith(adj[bestV])
+		work.AndNot(remove)
 	}
 	return result
 }
 
-// localSearch tries (1,2)-swaps: remove 1 edge, try to insert 2.
-func localSearch(edges []Edge) []Edge {
+// localSearch tries (1,2)-swaps within the subgraph induced by active.
+func localSearch(edges []Edge, active Bitset) []Edge {
 	improved := true
 	for improved {
 		improved = false
 		for i := 0; i < len(edges); i++ {
-			// Forbidden vertices from remaining edges.
-			var forbidden Bitset
+			forbidden := newBitset()
 			for j := 0; j < len(edges); j++ {
 				if j == i {
 					continue
 				}
-				forbidden.OrWith(&adj[edges[j].u])
-				forbidden.OrWith(&adj[edges[j].v])
+				forbidden.OrWith(adj[edges[j].u])
+				forbidden.OrWith(adj[edges[j].v])
 			}
-			// Available vertices.
-			var avail Bitset
-			for k := 0; k < n; k++ {
-				avail.Set(k)
-			}
-			avail.AndNot(&forbidden)
-			// Greedily find induced matching edges in available subgraph.
+			avail := active.Clone()
+			avail.AndNot(forbidden)
 			localAvail := avail
 			var newEdges []Edge
 			for len(newEdges) < 2 {
@@ -165,7 +239,7 @@ func localSearch(edges []Edge) []Edge {
 					if !localAvail.Has(u) {
 						continue
 					}
-					nbU := adj[u].And(&localAvail)
+					nbU := adj[u].And(localAvail)
 					for wi := 0; wi < nWords; wi++ {
 						w := nbU[wi]
 						if wi < u>>6 {
@@ -177,10 +251,9 @@ func localSearch(edges []Edge) []Edge {
 							bit := bits.TrailingZeros64(w)
 							v := wi*64 + bit
 							w &= w - 1
-							var combined Bitset
-							combined = adj[u]
-							combined.OrWith(&adj[v])
-							score := combined.And(&localAvail).PopCount()
+							combined := adj[u].Clone()
+							combined.OrWith(adj[v])
+							score := combined.And(localAvail).PopCount()
 							if score < fBest {
 								fBest = score
 								foundU = u
@@ -193,10 +266,9 @@ func localSearch(edges []Edge) []Edge {
 					break
 				}
 				newEdges = append(newEdges, Edge{foundU, foundV})
-				var remove Bitset
-				remove = adj[foundU]
-				remove.OrWith(&adj[foundV])
-				localAvail.AndNot(&remove)
+				remove := adj[foundU].Clone()
+				remove.OrWith(adj[foundV])
+				localAvail.AndNot(remove)
 			}
 			if len(newEdges) >= 2 {
 				newSol := make([]Edge, 0, len(edges)-1+len(newEdges))
@@ -215,7 +287,10 @@ func localSearch(edges []Edge) []Edge {
 	return edges
 }
 
-func solve(active Bitset) {
+// solveBB is the branch-and-bound routine. It mutates bestSize/bestEdges/curEdges
+// to track the best found within the *current* component (caller manages saving
+// these across components).
+func solveBB(active Bitset) {
 	if timedOut {
 		return
 	}
@@ -230,31 +305,29 @@ func solve(active Bitset) {
 	savedLen := len(curEdges)
 	defer func() { curEdges = curEdges[:savedLen] }()
 
-	// === Reductions ===
+	// Reductions
 	changed := true
 	for changed {
 		changed = false
-		// Remove isolated vertices (degree 0).
 		for u := 0; u < n; u++ {
 			if !active.Has(u) {
 				continue
 			}
-			if adj[u].And(&active).IsZero() {
+			if adj[u].And(active).IsZero() {
 				active.Clear(u)
 				changed = true
 			}
 		}
-		// Force isolated edges (both endpoints degree 1).
 		for u := 0; u < n; u++ {
 			if !active.Has(u) {
 				continue
 			}
-			nb := adj[u].And(&active)
+			nb := adj[u].And(active)
 			if nb.PopCount() != 1 {
 				continue
 			}
 			v := nb.FirstSet()
-			if adj[v].And(&active).PopCount() != 1 {
+			if adj[v].And(active).PopCount() != 1 {
 				continue
 			}
 			curEdges = append(curEdges, Edge{u, v})
@@ -264,13 +337,11 @@ func solve(active Bitset) {
 		}
 	}
 
-	// === Cheap upper bound: activeCount/2 ===
 	activeCount := active.PopCount()
 	if len(curEdges)+activeCount/2 <= bestSize {
 		return
 	}
 
-	// === Find min-degree vertex + edge count ===
 	minDeg := n + 1
 	minV := -1
 	totalDeg := 0
@@ -278,25 +349,23 @@ func solve(active Bitset) {
 		if !active.Has(u) {
 			continue
 		}
-		deg := adj[u].And(&active).PopCount()
+		deg := adj[u].And(active).PopCount()
 		totalDeg += deg
 		if deg > 0 && deg < minDeg {
 			minDeg = deg
 			minV = u
 		}
 	}
-	edgeCount := totalDeg / 2
+	edges := totalDeg / 2
 
-	// Tighter upper bound using edge count.
 	ub := activeCount / 2
-	if edgeCount < ub {
-		ub = edgeCount
+	if edges < ub {
+		ub = edges
 	}
 	if len(curEdges)+ub <= bestSize {
 		return
 	}
 
-	// No edges remain: check if current solution is best.
 	if minV == -1 {
 		if len(curEdges) > bestSize {
 			bestSize = len(curEdges)
@@ -306,10 +375,9 @@ func solve(active Bitset) {
 		return
 	}
 
-	neighbors := adj[minV].And(&active)
+	neighbors := adj[minV].And(active)
 	afterReduction := len(curEdges)
 
-	// Branch: include edge (minV, nei) for each active neighbor.
 	for wi := 0; wi < nWords; wi++ {
 		w := neighbors[wi]
 		for w != 0 {
@@ -319,23 +387,58 @@ func solve(active Bitset) {
 			if timedOut {
 				return
 			}
-			newActive := active
-			var remove Bitset
-			remove = adj[minV]
-			remove.OrWith(&adj[nei])
-			newActive.AndNot(&remove)
+			newActive := active.Clone()
+			remove := adj[minV].Clone()
+			remove.OrWith(adj[nei])
+			newActive.AndNot(remove)
 			curEdges = append(curEdges[:afterReduction], Edge{minV, nei})
-			solve(newActive)
+			solveBB(newActive)
 		}
 	}
 
-	// Branch: exclude minV.
 	if !timedOut {
 		curEdges = curEdges[:afterReduction]
-		newActive := active
+		newActive := active.Clone()
 		newActive.Clear(minV)
-		solve(newActive)
+		solveBB(newActive)
 	}
+}
+
+// solveComponent runs heuristic + UB checks + B&B on a single component.
+// Returns the best edges found for this component.
+func solveComponent(comp Bitset) []Edge {
+	// Heuristic LB
+	heur := greedySolve(comp)
+	heur = localSearch(heur, comp)
+	lb := len(heur)
+
+	// Tight UB
+	ub := upperBound(comp)
+
+	if lb >= ub {
+		// Heuristic already optimal (or component size 0/1).
+		return heur
+	}
+
+	// B&B on this component, seeded with the heuristic.
+	savedBest := bestSize
+	savedEdges := bestEdges
+	savedCurLen := len(curEdges)
+
+	bestSize = lb
+	bestEdges = make([]Edge, len(heur))
+	copy(bestEdges, heur)
+	curEdges = curEdges[:0]
+
+	solveBB(comp.Clone())
+
+	result := bestEdges
+
+	bestSize = savedBest
+	bestEdges = savedEdges
+	curEdges = curEdges[:savedCurLen]
+
+	return result
 }
 
 func main() {
@@ -352,7 +455,6 @@ func main() {
 		}
 	}
 
-	// Read input.
 	fin, err := os.Open(os.Args[1])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -360,7 +462,15 @@ func main() {
 	}
 	reader := bufio.NewReader(fin)
 	fmt.Fscan(reader, &n)
+	if n <= 0 {
+		fmt.Fprintf(os.Stderr, "Invalid n=%d\n", n)
+		os.Exit(1)
+	}
 	nWords = (n + 63) / 64
+	adj = make([]Bitset, n)
+	for i := 0; i < n; i++ {
+		adj[i] = newBitset()
+	}
 	for i := 0; i < n; i++ {
 		for j := 0; j < n; j++ {
 			var val int
@@ -373,30 +483,30 @@ func main() {
 	}
 	fin.Close()
 
-	// Phase 1: Greedy + Local Search.
-	heuristic := greedySolve()
-	heuristic = localSearch(heuristic)
-	bestSize = len(heuristic)
-	bestEdges = make([]Edge, len(heuristic))
-	copy(bestEdges, heuristic)
-
-	// Phase 2: Branch and Bound.
-	var active Bitset
+	// Decompose the graph into connected components and solve each independently.
+	full := newBitset()
 	for i := 0; i < n; i++ {
-		active.Set(i)
+		full.Set(i)
 	}
-	curEdges = make([]Edge, 0, n/2)
-	solve(active)
+	comps := findComponents(full)
 
-	// Write output.
+	curEdges = make([]Edge, 0, n/2)
+	var allEdges []Edge
+	for _, comp := range comps {
+		ce := solveComponent(comp)
+		allEdges = append(allEdges, ce...)
+	}
+
+	finalSize := len(allEdges)
+
 	fout, err := os.Create(os.Args[2])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	writer := bufio.NewWriter(fout)
-	fmt.Fprintln(writer, bestSize)
-	for _, e := range bestEdges {
+	fmt.Fprintln(writer, finalSize)
+	for _, e := range allEdges {
 		u, v := e.u, e.v
 		if u > v {
 			u, v = v, u
@@ -407,6 +517,6 @@ func main() {
 	fout.Close()
 
 	elapsed := time.Since(startTime)
-	fmt.Fprintf(os.Stderr, "Solution size: %d, nodes: %d, time: %v, timed_out: %v\n",
-		bestSize, nodes, elapsed, timedOut)
+	fmt.Fprintf(os.Stderr, "Solution size: %d, components: %d, nodes: %d, time: %v, timed_out: %v\n",
+		finalSize, len(comps), nodes, elapsed, timedOut)
 }
