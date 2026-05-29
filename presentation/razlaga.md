@@ -436,53 +436,180 @@ vrnemo nič slabšega od faze 1.
 
 ## Diapozitiv 7 — Bitne strukture
 
-### Predstavitev
+### Cilj: množice vozlišč kot prvorazredna podatkovna struktura
 
-Graf hranimo kot polje **bitnih nizov** fiksne velikosti:
+Algoritem ves čas izvaja istovrstne operacije nad **množicami vozlišč**: "koliko aktivnih
+sosedov ima $v$?", "odstrani $N(v) \cup N(w)$ iz aktivnih", "presekaj soseščini dveh
+vozlišč", "ali je še kakšna povezava na voljo?". Če bi te množice hranili kot rezine
+indeksov (`[]int`) ali kot zgoščevalne tabele, bi vsaka operacija stala $O(\deg)$ ali
+$O(n)$ z nepredvidljivimi skoki po pomnilniku. Z **bitnimi nizi** se vse spremeni v
+nekaj zaporednih operacij nad `uint64` — strojnih, zaporednih in povsem znotraj
+predpomnilnika.
 
-```go
-type Bitset [16]uint64        // 16 × 64 = 1024 vozlišč
-adj  [maxN]Bitset             // adj[v] = soseščina vozlišča v
-active Bitset                 // trenutno aktivna vozlišča
-```
-
-`Bitset[i]` z bitom $j$ pomeni: vozlišče $j$ je v množici.
-
-### Hitre operacije
-
-| Operacija | Pomen | Zahtevnost |
-|----------|-------|------------|
-| `bs.Set(i) / Clear(i) / Has(i)` | osnovne | $O(1)$ |
-| `bs.OrWith(&c)` | unija | $O(w)$ |
-| `bs.AndNot(&c)` | odstrani vse v $c$ | $O(w)$ |
-| `bs.PopCount()` | velikost | $O(w)$ + **POPCNT** |
-| `a.And(&b)` | presek | $O(w)$ |
-
-Kjer je $w = \lceil n/64 \rceil$ — za $n=200$ je $w = 4$, torej **konstanta**.
-
-### Konkreten dobiček
-
-"Odstrani $v$ in vse njegove sosede iz aktivnega grafa" — kritičen korak v B&B:
+### Tip `Bitset`
 
 ```go
-active.AndNot(&adj[v])   // 16 strojnih AND-NOT operacij
-active.Clear(v)
+const maxN = 1024
+const maxWords = maxN / 64        // = 16
+
+type Bitset [maxWords]uint64      // 16 × 64 = 1024 bitov
 ```
 
-S klasično adjacency listo bi to bilo $O(\deg(v))$ s skoki po pomnilniku in razveljavljanjem
-predpomnilnika. Z bitnimi nizi je to **16 zaporednih `uint64` operacij** — zaporedoma v
-pomnilniku, idealno za CPU.
+`Bitset` je fiksno polje 16 šestdesetštirih-bitnih besed. **Vsak bit ustreza enemu
+vozlišču.** Vozlišče $i$ je v množici natanko tedaj, ko je $i$-ti bit (v zaporedju
+1024 bitov, beseda 0 najprej) prižgan. Bit je dvojiški zastavica: 1 = "v množici",
+0 = "ni v množici".
 
-### POPCNT
+Pretvorba med indeksom vozlišča in lokacijo bita:
 
-Hardverska `POPCNT` (od SSE4.2 naprej) prešteje bite v `uint64` v enem urinem ciklu.
-Go `math/bits.OnesCount64` se prevede prav v ta ukaz. Velikost množic merimo zelo poceni.
+| Količina | Izračun | Pomen |
+|----------|---------|-------|
+| Beseda | `i >> 6` ($= \lfloor i/64 \rfloor$) | kateri od 16 `uint64`-ov |
+| Pozicija v besedi | `i & 63` ($= i \bmod 64$) | kateri bit v tej besedi |
+| Maska | `1 << (i & 63)` | bit, ki ga prižgemo/preverimo |
 
-### Zakaj fiksna velikost in ne `[]uint64`?
+Zato so `Set`, `Clear`, `Has` skoraj brezplačni — par strojnih ukazov (premik,
+OR / AND-NOT / AND):
 
-Fiksne `[16]uint64` so **na stacku**, brez alokacij. Kopiranje (`a := b`) je 128 bajtov —
-hitreje od dinamičnega `make`. Cena: omejitev na 1024 vozlišč, kar za to nalogo več kot
-zadošča.
+```go
+func (b *Bitset) Set(i int)      { b[i>>6] |=  1 << uint(i&63) }
+func (b *Bitset) Clear(i int)    { b[i>>6] &^= 1 << uint(i&63) }
+func (b *Bitset) Has(i int) bool { return b[i>>6] & (1<<uint(i&63)) != 0 }
+```
+
+Globalna spremenljivka `nWords = ⌈n / 64⌉` določa, koliko od 16 besed dejansko
+iteriramo v operacijah nad celotno množico. Za $n = 200$ je $w = 4$ in obdelamo
+le 4 besede, ne vseh 16.
+
+### Kako shranimo graf
+
+Graf $G$ **ne** hranimo kot seznam povezav in ne kot $n \times n$ matriko v dveh
+dimenzijah, ampak kot **polje soseščinskih bitnih nizov**:
+
+```go
+var adj [maxN]Bitset
+```
+
+- `adj[v]` je **soseščina vozlišča $v$**: bit $u$ v `adj[v]` je 1 natanko tedaj,
+  ko obstaja povezava $(u, v) \in E$.
+- Polje ima fiksno dolžino `maxN = 1024`; indeksiramo ga z $v$.
+- Ker je graf neusmerjen, je polje **simetrično**: pri branju vhoda postavimo
+  oba bita,
+
+  ```go
+  adj[i].Set(j)
+  adj[j].Set(i)
+  ```
+
+  tako da je bit $u$ v `adj[v]` enak bitu $v$ v `adj[u]`. Vsako povezavo torej
+  hranimo dvakrat — to je premišljena izbira, ki nam dovoli "pridobiti vse
+  sosede" v enem branju 16 zaporednih besed.
+
+Vsebinsko gre za isto informacijo kot v matriki sosednosti, le da je vsaka vrstica
+matrike **stisnjena** v 16 `uint64`-ov in tako dostopna z enim kazalcem (`&adj[v]`),
+en pomnilniški blok 128 bajtov.
+
+### Beri zapis: primer $n = 7$
+
+Vzemimo graf iz navodil. Povezave: $(1,3), (2,6), (3,7), (4,5), (4,7)$. Soseščine:
+
+| Vozlišče $v$ | $N(v)$ | `adj[v]` (biti 7..0) |
+|--------------|--------|----------------------|
+| 1 | $\{3\}$ | `0000 1000` |
+| 2 | $\{6\}$ | `0100 0000` |
+| 3 | $\{1, 7\}$ | `1000 0010` |
+| 4 | $\{5, 7\}$ | `1010 0000` |
+| 5 | $\{4\}$ | `0001 0000` |
+| 6 | $\{2\}$ | `0000 0100` |
+| 7 | $\{3, 4\}$ | `0001 1000` |
+
+Bit z indeksom $k$ predstavlja vozlišče $k$ (najnižji bit = vozlišče 0; v tem primeru
+je ta bit vedno 0, ker vozlišče 0 ni del vhoda). Vse prikazane vrednosti v resnici
+zasedajo zgornjih 56 bitov besede 0 = 0, spodnji bajt pa je tisti, ki je narisan.
+V Go-ju bi `adj[3]` izpisano kot `uint64` znašalo `0x0000000000000082` (=$2^1 + 2^7$).
+
+Iz tabele takoj preberemo: `adj[v].PopCount()` = stopnja vozlišča $v$, npr.
+`adj[3].PopCount() = 2`. In `adj[3] & adj[7]` = `1000 0010 & 0001 1000` = `0000 0000`,
+torej $N(3) \cap N(7) = \varnothing$ — vozlišči nimata skupnih sosedov.
+
+### Kaj poleg grafa hranimo z bitseti
+
+Med tekom uporabljamo več bitsetov, vsak predstavlja drugo množico vozlišč:
+
+| Spremenljivka | Pomen bita $i = 1$ | Kdaj se spreminja |
+|---------------|--------------------|--------------------|
+| `adj[v]` | $i$ je sosed vozlišča $v$ | postavljeno enkrat, ob branju vhoda |
+| `active` | $i$ je v trenutnem **aktivnem podgrafu** | v vsakem rekurzivnem koraku B&B |
+| `newActive` (lokalno v B&B) | enako, za naslednjo rekurzivno raven | kopija `active`, odštete $N(v) \cup N(w)$ |
+| `remove` (zaslonjeno) | $i$ je v $N(v) \cup N(w)$ | sestavljeno tik pred odstranitvijo |
+| `forbidden` (lokalno iskanje) | $i$ leži v soseščini katere od sprejetih povezav | pri vsakem (1,2)-poskusu |
+| `avail` (lokalno iskanje) | $i$ je kandidat za novo povezavo | komplement `forbidden` znotraj `active` |
+
+Sama **rešitev** ni bitset: povezave hranimo kot `[]Edge` (rezina parov `{u, v}`),
+ker je pri rezultatu pomembna identiteta in vrstni red. Spremenljivki `curEdges`
+(trenutna delna rešitev v rekurziji) in `bestEdges` (najboljša doslej) sta torej
+običajni rezini, ne bitseti.
+
+### Hitre operacije in njihov "grafovski" pomen
+
+Vsaka spodnja operacija je zanka čez $w = \lceil n/64 \rceil$ besed; za $n = 200$
+to pomeni **4 ponovitve** — v praksi konstanta.
+
+| Operacija | Pomen v jeziku grafov | Tipična raba |
+|-----------|----------------------|---------------|
+| `bs.Set(i)` / `Clear(i)` / `Has(i)` | dodaj / odstrani / preveri eno vozlišče | točkovne posodobitve |
+| `a.And(&b)` | presek $A \cap B$ | `adj[v].And(&active)` = aktivni sosedi $v$ |
+| `bs.OrWith(&c)` | unija $A \cup B$ (na mestu) | gradnja $N(u) \cup N(v)$ |
+| `bs.AndNot(&c)` | razlika $A \setminus C$ (na mestu) | odstrani $N(v)$ iz aktivnih |
+| `bs.PopCount()` | $\lvert A \rvert$ | velikost množice / stopnja |
+| `bs.FirstSet()` | najmanjši $i \in A$ | iteracija po vozliščih |
+| `bs.IsZero()` | $A = \varnothing$ | bazni primer rekurzije |
+
+Tipično zaporedje v B&B (vključitvena veja za povezavo $(v, w)$):
+
+```go
+// 1) Aktivni sosedi v — stopnja v aktivnem podgrafu.
+deg := adj[v].And(&active).PopCount()
+
+// 2) Vključi (v, w) v rešitev in pripravi nov aktivni podgraf.
+newActive := active            // kopija (128 B, na stacku)
+var remove Bitset
+remove = adj[v]
+remove.OrWith(&adj[w])         // remove = N(v) ∪ N(w)
+newActive.AndNot(&remove)      // odstrani vse iz N(v) ∪ N(w)
+newActive.Clear(v)             // odstrani še sama v in w
+newActive.Clear(w)
+solve(newActive)               // rekurzija — kopija gre kot vrednost
+```
+
+Vsaka vrstica je zanka čez 4–16 besed: brez alokacij, brez razveljavljanja
+predpomnilnika, brez kazalcev čez heap.
+
+### Zakaj `POPCNT` šteje
+
+Moderni procesorji (x86 od SSE4.2, ARM od v8) imajo strojni ukaz **`POPCNT`**,
+ki v enem urinem ciklu prešteje prižgane bite v 64-bitnem registru. Go ga uporabi
+prek `math/bits.OnesCount64`. Velikost množice je torej "skoraj brezplačna":
+$w$ klicev `POPCNT` (≤ 16) je nekaj nanosekund **ne glede na to, koliko vozlišč
+je dejansko aktivnih**. Scoring v požrešnem in B&B, ki desetkrat na vsako vejo
+izračuna $\lvert (N(u) \cup N(v)) \cap \text{active} \rvert$, zato ni ozko grlo.
+
+### Zakaj fiksna velikost `[16]uint64`
+
+Alternativa bi bila `[]uint64` dolžine `nWords`. Toda:
+
+- **Stack vs. heap:** `[16]uint64` je vrednostni tip. `var x Bitset` ne sproži
+  alokacije, `newActive := active` skopira **128 bajtov** kot zlepek strojnih
+  premikov. Rezina `[]uint64` zahteva `make` (heap) in upravlja "header"
+  (kazalec + dolžina + kapaciteta).
+- **Inlining in unroll:** prevajalnik laže optimizira zanke s konstantno zgornjo
+  mejo. V vročih zankah Go-jev kompilator prepozna fiksno dolžino 16 in lahko
+  zanko razvije ali vektorizira.
+- **Predvidljiv pomnilniški vzorec:** vsi biti enega bitseta ležijo zaporedoma
+  v 128 bajtih — natanko **2 vrstici predpomnilnika** (64 B vsaka).
+
+Cena je trda omejitev na **1024 vozlišč**. Za to nalogo (in tipične primere
+iz knjižnice) povsem zadošča.
 
 ---
 
@@ -545,3 +672,124 @@ Bolj kot je graf strukturiran (drevesa, ciklični grafi, redki grafi), bolj B&B 
   posodobitev bi prihranila $O(m)$ dela na korak.
 - **Posebne hitre poti**: če je $G$ drevo, je MIM rešljiv v polinomskem času (DP po
   drevesu). Avtomatsko zaznavanje takih razredov bi pohitrilo "srečne" primere.
+
+---
+
+## Dodatek — Implementacijski pregled (`solver.go`)
+
+Strnjen pregled, **katere operacije** se izvedejo in **v kakšnem zaporedju**, od
+začetka programa do izpisa rezultata. Vsaka točka navaja ključne klice nad bitseti,
+da je videti, kako prejšnja teorija postane vrstice kode.
+
+### 1. Vhod in inicializacija (`main`)
+
+1. Preberemo $n$ in nastavimo `nWords = (n + 63) / 64` — odločimo, koliko od 16
+   besed dejansko obdelujemo.
+2. Beremo $n \times n$ matriko sosednosti. Za vsako enico postavimo **oba** bita:
+   ```go
+   adj[i].Set(j)
+   adj[j].Set(i)
+   ```
+   Po koncu je `adj[v]` množica sosedov vozlišča $v$.
+3. Zgradimo začetni `active` z `Set(0..n-1)` — vsa vozlišča so na začetku v igri.
+4. Zaženemo **fazo 1** (požrešni + lokalno iskanje), shranimo dobljen $|S|$ v
+   `bestSize` in povezave v `bestEdges`. To je naša garantirana spodnja meja.
+5. Zaženemo **fazo 2**: `solve(active)`.
+6. Po vrnitvi (bodisi naravno bodisi zaradi `timedOut`) izpišemo `bestEdges`.
+
+### 2. Faza 1a — `greedySolve()`
+
+Zanka, dokler v aktivnem grafu obstaja povezava:
+
+1. Za vsako vozlišče $u \in$ `active`:
+   - `nbU := adj[u].And(&active)` — aktivni sosedi $u$.
+   - Iteriramo bite `nbU` (kanonično $v > u$, da povezave ne štejemo dvakrat) z
+     `bits.TrailingZeros64` in `w &= w - 1`.
+   - Za vsako kandidatno $(u, v)$ izračunamo
+
+     ```go
+     combined = adj[u]
+     combined.OrWith(&adj[v])
+     score := combined.And(&active).PopCount()   // |N(u) ∪ N(v) ∩ active|
+     ```
+   - Spremljamo $(u^*, v^*)$ z najmanjšim score.
+2. Dodamo $(u^*, v^*)$ v rezultat in iz `active` odstranimo $N(u^*) \cup N(v^*)$:
+   ```go
+   remove = adj[bestU]; remove.OrWith(&adj[bestV])
+   active.AndNot(&remove)
+   ```
+3. Konec, ko nobenega kandidata ni več (`bestU == -1`).
+
+Operacije na povezavo: ena `And`, ena `OrWith`, eden `PopCount` — vse $O(w)$.
+
+### 3. Faza 1b — `localSearch(edges)`
+
+Zunanja zanka teče, dokler je `improved == true`. Za vsako povezavo $e_i \in S$:
+
+1. **Zgradi `forbidden`**: za vse preostale povezave $e_j$ ($j \neq i$) zlije
+   `adj[u_j]` in `adj[v_j]` v `forbidden` z `OrWith`. To je množica vozlišč,
+   ki jih nove povezave ne smejo uporabiti.
+2. **Zgradi `avail`**: `Set(0..n-1)`, nato `avail.AndNot(&forbidden)`.
+3. **Mali požrešni** nad `localAvail`: enak vzorec kot v `greedySolve`, le da
+   uporabi `localAvail` namesto `active`. Cilj je dobiti **dve** novi povezavi;
+   po vsaki sprejeti odstranimo $N(\cdot) \cup N(\cdot)$ iz `localAvail`.
+4. Če smo našli ≥ 2 povezavi, sestavimo nov $S$ (brez $e_i$, plus nove),
+   postavimo `improved = true` in zaženemo zunanjo zanko znova.
+
+Konvergira po $\le \lfloor n/2 \rfloor$ sprejetih izmenjavah (vsaka prinese +1).
+
+### 4. Faza 2 — rekurzivni `solve(active Bitset)`
+
+Vsak klic dobi **kopijo** `active` (vrednostni tip, 128 B na stacku). V tem
+zaporedju:
+
+1. **Časovni in flag check** — če je `timedOut`, takoj vrni. Vsakih 4096 vozlišč
+   drevesa (`nodes & 0xFFF == 0`) preverimo `time.Since(startTime) > timeLimit`.
+2. **Shrani `len(curEdges)`** in `defer` obnovitev — za rollback ob vrnitvi
+   iz veje.
+3. **Redukcije v zanki "do mirovanja"**:
+   - *Izolirana vozlišča*: za vsak $u$ z `adj[u].And(&active).IsZero()` izvedemo
+     `active.Clear(u)`.
+   - *Izolirane povezave*: za vsak $u$ z $\deg = 1$ (en `PopCount` aktivnih
+     sosedov) najdemo sosed $v$ prek `FirstSet()`. Če ima tudi $v$ stopnjo 1,
+     dodamo $(u, v)$ v `curEdges` in počistimo oba.
+   - Ponavljaj, dokler v eni iteraciji nič ne odstraniš.
+4. **Poceni zgornja meja** — `active.PopCount() / 2`. Če
+   `len(curEdges) + activeCount/2 ≤ bestSize`, vrni.
+5. **En sprehod čez aktivna vozlišča** izračuna hkrati **dve količini**:
+   - `minDeg` in `minV` — vozlišče z najmanjšo (a pozitivno) stopnjo;
+   - `totalDeg` → `edgeCount = totalDeg / 2`.
+6. **Tesnejša zgornja meja**: `ub = min(activeCount/2, edgeCount)`. Če
+   `len(curEdges) + ub ≤ bestSize`, vrni.
+7. **Bazni primer**: če `minV == -1` (v aktivnem grafu ni nobene povezave) in
+   `len(curEdges) > bestSize`, posodobi `bestSize` in skopiraj `curEdges` v
+   `bestEdges`. Vrni.
+8. **Vključitvene veje** — `neighbors := adj[minV].And(&active)`. Za vsak
+   prižgan bit (sosed `nei`):
+   ```go
+   newActive := active                   // kopija
+   remove   = adj[minV]
+   remove.OrWith(&adj[nei])               // N(minV) ∪ N(nei)
+   newActive.AndNot(&remove)              // ⇒ aktivni \ N(minV)∪N(nei)
+   curEdges = append(curEdges[:afterReduction], Edge{minV, nei})
+   solve(newActive)                       // rekurzija
+   ```
+   Po vrnitvi gre v naslednjega soseda; `curEdges[:afterReduction]` odreže
+   zadnjo dodano povezavo.
+9. **Izključitvena veja** — `newActive := active; newActive.Clear(minV); solve(newActive)`.
+   (Po varovalu `if !timedOut`.)
+
+### 5. Skupna slika v eni vrstici
+
+```
+main → preberi adj → greedySolve → localSearch → bestSize/bestEdges
+     → solve(active):
+          reductions* → ub-check → min-deg & edge-count → ub-check
+          → include-branches (po sosedih) → exclude-branch
+     → izpis bestEdges
+```
+
+Vsak korak v `solve` je nekaj zank čez `nWords` besed; ena rekurzija pomeni
+**eno alokacijo nič** (kopija `active` je vrednostna, `curEdges` raste in se
+krči nad isto rezino prek `[:afterReduction]`). Od tod izhaja praktična
+hitrost tudi pri globokih drevesih iskanja.
